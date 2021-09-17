@@ -18,14 +18,12 @@ const properties = require('./json/properties.json');
  * @return {Promise<{}>} A promise to the user.
  */
 const getUserWithEmail = function(email) {
-  // console.log(typeof email);
   return pool
   .query(`SELECT * FROM users WHERE email = $1;`, [email])
   .then((result) => {
     return Promise.resolve(result.rows[0]);
     })
     .catch((err) => {
-      // console.log(err.message);
       return null;
     });
 }
@@ -91,12 +89,64 @@ exports.getAllReservations = getAllReservations;
  * @param {*} limit The number of results to return.
  * @return {Promise<[{}]>}  A promise to the properties.
  */
-const getAllProperties = (options, limit = 10) => {
-  return pool
-    .query(`SELECT * FROM properties LIMIT $1;`, [limit])
-    .then((result) => {
-      return Promise.resolve(result.rows);
-    })
+const getAllProperties = function (options, limit = 10) {
+  // Request from My Listing
+  if (options.owner_id) {
+    return pool
+      .query(`SELECT * FROM properties WHERE owner_id = $1 LIMIT $2;`, [options.owner_id, limit])
+      .then((result) => {
+        return Promise.resolve(result.rows);
+      })
+      .catch((err) => {
+        console.log(err.message);
+      });
+  }
+
+  // Request from Search
+  const queryParams = [];
+  
+  let queryString = `
+  SELECT properties.*, avg(property_reviews.rating) as average_rating
+  FROM properties
+  JOIN property_reviews ON properties.id = property_id
+  `;
+
+  if (options.city) {
+    queryParams.push(`%${options.city}%`);
+    queryString += `WHERE city LIKE $${queryParams.length} 
+    `;
+
+    if (options.minimum_price_per_night) {
+      const minPrice = options.minimum_price_per_night * 100;
+      queryParams.push(`${minPrice}`);
+      queryString += `AND cost_per_night BETWEEN $${queryParams.length} 
+      `;
+    }
+  
+    if (options.maximum_price_per_night) {
+      const maxPrice = options.maximum_price_per_night * 100;
+      queryParams.push(`${maxPrice}`);
+      queryString += `AND $${queryParams.length} 
+      `;
+    }
+  
+    queryString += `GROUP BY properties.id 
+    `;
+  
+    if (options.minimum_rating) {
+      queryParams.push(`${options.minimum_rating}`);
+      queryString += `HAVING avg(property_reviews.rating) >= $${queryParams.length} `;
+    }
+  } else {
+    queryString += `GROUP BY properties.id `;
+  }
+  queryParams.push(limit);
+  queryString += `
+  LIMIT $${queryParams.length}; 
+  `;
+  
+  return pool.query(queryString, queryParams)
+    .then((res) => res.rows)
     .catch((err) => {
       console.log(err.message);
     });
